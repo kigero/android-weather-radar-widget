@@ -29,10 +29,25 @@ import android.graphics.PorterDuff.Mode;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import android.util.Log;
+import android.location.Location;
+import android.location.Address;
+import android.location.Geocoder;
+import android.location.LocationManager;
+import java.util.List;
+import org.apache.http.params.HttpParams;
+import org.apache.http.params.BasicHttpParams;
+import org.apache.http.client.HttpClient;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.HttpResponse;
+import org.apache.http.Header;
+import org.apache.http.client.params.ClientPNames;
 
 public class WeatherRadarWidgetProvider extends AppWidgetProvider
 {
     private static final String TAG = WeatherRadarWidgetProvider.class.getSimpleName();
+
+    /** The app to launch when tapping on the radar. */
     private static final String LAUNCH_PACKAGE = "com.appdlab.radarexpress";
     private static final float DEFAULT_SCALE = 2.0f;
     private static final String DEFAULT_STATION = "DTX";
@@ -49,10 +64,104 @@ public class WeatherRadarWidgetProvider extends AppWidgetProvider
     private static final String CITIES = BASE_OVERLAYS_URL + "Cities/Short/%s_City_Short.gif";
     private static final String WARNINGS = BASE_RIDGE_URL + "Warnings/Short/%s_Warnings_0.gif";
     private static final String BASE_REFLECTIVITY = BASE_RIDGE_URL + "RadarImg/N0R/%s_N0R_0.gif";
+    private static final String ZIP_TO_STATION_URL = "http://forecast.weather.gov/zipcity.php?inputstring=%s";
 
     private static SimpleDateFormat sdf = new SimpleDateFormat(UPDATE_DATE_FORMAT);
     private static Bitmap[] bmps = new Bitmap[8];
+    private static String station;
 
+    /**
+     * Get the current zip code from the location manager.
+     */
+    private static String getCurrentZip(Context context) throws IOException
+    {
+        LocationManager locationManager = (LocationManager)
+            context.getSystemService(Context.LOCATION_SERVICE);
+
+        Location location = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+        if(location == null)
+        {
+            location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+        }
+
+        if(location != null)
+        {
+            Geocoder geocoder = new Geocoder(context);
+            List<Address> addresses = geocoder.getFromLocation(location.getLatitude(),
+                    location.getLongitude(), 1);
+            if(addresses.size() > 0)
+            {
+                return addresses.get(0).getPostalCode();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the weather station from the given zip code.  Do this by calling the
+     * URL that NWS uses to redirect to the proper page, and then check the
+     * redirect location to get the site.
+     */
+    private static String getStationFromZip(String zip) throws IOException
+    {
+        String url = String.format(ZIP_TO_STATION_URL, zip);
+
+        HttpParams params = new BasicHttpParams();
+        params.setBooleanParameter(ClientPNames.HANDLE_REDIRECTS, false);
+
+        HttpGet get = new HttpGet(url);
+        get.setParams(params);
+
+        HttpClient client = new DefaultHttpClient();
+        HttpResponse resp = client.execute(get);
+
+        Header header = resp.getFirstHeader("Location");
+        String value = header.getValue();
+        
+        int idx = value.indexOf("?");
+        if(idx >= 0)
+        {
+            value = value.substring(idx + 1);
+            String[] urlParams = value.split("&");
+            for(String str : urlParams)
+            {
+                if(str.startsWith("site"))
+                {
+                    String[] param = str.split("=");
+                    return param[1];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Tries to find the current station based on location.
+     */
+    private static String getCurrentStation(Context context)
+    {
+        String rtrn = null;
+        try
+        {
+            String zip = getCurrentZip(context);
+            if(zip != null)
+            {
+                rtrn = getStationFromZip(zip);
+            }
+        }
+        catch(Exception e)
+        {
+            Log.e(TAG, "Could not get location.", e);
+        }
+
+        return rtrn;
+    }
+
+    /**
+     * Load the image for the given station and URL.
+     */
     private static Bitmap getStationBmp(String format, String station) throws MalformedURLException, IOException
     {
         String formattedURL = String.format(format, station);
@@ -98,6 +207,9 @@ public class WeatherRadarWidgetProvider extends AppWidgetProvider
         return rtrn;
     }
 
+    /**
+     * Load the images for the given station.
+     */
     private static void getImages(String station) throws MalformedURLException, IOException
     {
         bmps[0] = getStationBmp(TOPO, station);
@@ -110,6 +222,9 @@ public class WeatherRadarWidgetProvider extends AppWidgetProvider
 //        bmps[7] = getStationBmp(LEGEND, station);
     }
 
+    /**
+     * Combine all of the images into a single bmp.
+     */
     private static Bitmap combineImages(float scale)
     {
         if(scale < 1.0f)
@@ -188,10 +303,27 @@ public class WeatherRadarWidgetProvider extends AppWidgetProvider
 
         protected RemoteViews doInBackground(String... codes)
         {
+            // First get the current station.  If the current station cannot be found, the first
+            // given code will be used.
+            String curStation = getCurrentStation(context);
+            if(curStation == null)
+            {
+                // Use the last station.
+                if(station == null)
+                {
+                    station = codes[0];
+                }
+            }
+            else
+            {
+                Log.i(TAG, "Found current station: " + curStation);
+                station = curStation;
+            }
+
             RemoteViews rv = new RemoteViews(context.getPackageName(), R.layout.weather_radar_widget);
             try
             {
-                getImages(codes[0]);
+                getImages(station);
                 rv.setImageViewBitmap(R.id.img, combineImages(scale));
                 rv.setTextViewText(R.id.text, sdf.format(new Date()));
 
