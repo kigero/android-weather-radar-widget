@@ -1,0 +1,13 @@
+<!-- Update period is 20 minutes.
+  Should specify a preview.
+  initialKeyguardLayout not supported in 15, upgrade?
+  -->
+
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="120dp"
+    android:minHeight="120dp"
+    android:updatePeriodMillis="1200000"
+    android:initialLayout="@layout/weather_radar_widget"
+    android:resizeMode="horizontal|vertical">
+</appwidget-provider>
+
